@@ -2,7 +2,8 @@ spring:
   application:
     name: chinese-learning
   datasource:
-    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/chinese}
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/postgres}
+    schema: ${DATABASE_SCHEMA:chinese}
     username: ${DATABASE_USER}
     password: ${DATABASE_PASSWORD}
   jpa:
