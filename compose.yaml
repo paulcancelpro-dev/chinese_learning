@@ -1,0 +1,17 @@
+services:
+  postgres:
+    image: postgres:17
+    environment:
+      POSTGRES_DB: chinese
+      POSTGRES_USER: ${DATABASE_USER:-chinese}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-chinese_dev}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - chinese_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d chinese"]
+      interval: 5s
+      retries: 10
+volumes:
+  chinese_data:

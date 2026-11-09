@@ -1,0 +1,27 @@
+spring:
+  application:
+    name: chinese-learning
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/chinese}
+    username: ${DATABASE_USER}
+    password: ${DATABASE_PASSWORD}
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  port: ${PORT:8080}
+app:
+  frontend-origin: ${FRONTEND_ORIGIN:http://localhost:5173}
+  openai:
+    enabled: ${OPENAI_ENABLED:false}
+    api-key: ${OPENAI_API_KEY:}
+    model: ${OPENAI_MODEL:gpt-4o-mini}
+    url: https://api.openai.com/v1/responses
+    timeout-seconds: 30
+    max-output-tokens: ${OPENAI_MAX_OUTPUT_TOKENS:6000}
+    requests-per-minute: ${OPENAI_REQUESTS_PER_MINUTE:5}

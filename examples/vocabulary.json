@@ -1,0 +1,8 @@
+{
+  "vocabulary": [
+    {"hanzi": "朋友", "pinyin": "péngyou", "traductions_fr": ["ami", "amie"]},
+    {"hanzi": "水", "pinyin": "shuǐ", "traductions_fr": ["eau"]},
+    {"hanzi": "猫", "pinyin": "māo", "traductions_fr": ["chat"]},
+    {"hanzi": "书", "pinyin": "shū", "traductions_fr": ["livre"]}
+  ]
+}

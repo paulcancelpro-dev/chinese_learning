@@ -1,0 +1,13 @@
+{
+  "progress": [
+    {
+      "id": "7e818ffc-4018-4d71-891e-ec3d8fd55fbc",
+      "hanzi": "朋友",
+      "pinyin": "péngyou",
+      "skill": "HANZI_TO_FRENCH",
+      "correct": true,
+      "reviewedAt": "2026-01-01T10:00:00Z",
+      "answer": "ami"
+    }
+  ]
+}
