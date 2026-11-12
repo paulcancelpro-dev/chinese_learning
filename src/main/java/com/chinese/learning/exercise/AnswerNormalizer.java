@@ -15,4 +15,14 @@ public final class AnswerNormalizer {
         .replaceAll("[.!?。！？]+$", "")
         .strip();
   }
+
+  /** Ignore pinyin tone marks only; ü remains distinct from u. */
+  public static String normalize(String value, ExerciseType type) {
+    String normalized = normalize(value);
+    if (type != ExerciseType.HANZI_TO_PINYIN) return normalized;
+    return Normalizer.normalize(
+        Normalizer.normalize(normalized, Normalizer.Form.NFD)
+            .replaceAll("[\u0300\u0301\u0304\u030C]", ""),
+        Normalizer.Form.NFC);
+  }
 }

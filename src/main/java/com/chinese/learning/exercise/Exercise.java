@@ -7,6 +7,10 @@ import java.util.*;
 @Entity
 public class Exercise {
   @Id public UUID id = UUID.randomUUID();
+
+  /** Original exercise supplying this attempt; null for newly generated content. */
+  public UUID sourceExerciseId;
+
   public UUID sessionId;
   public UUID wordId;
 

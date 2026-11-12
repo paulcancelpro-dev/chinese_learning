@@ -277,4 +277,126 @@ abstract class BasePostgresScenarios {
                 .content("{\"hanzi\":\"朋友\",\"pinyin\":\"péngyou\",\"traductions_fr\":[\"ami\"]}"))
         .andExpect(status().isConflict());
   }
+
+  private UUID storedPhrase(ExerciseType type, int difficulty, String question) {
+    UUID wordId = jdbc.queryForObject("select id from word where hanzi='朋友'", UUID.class);
+    return storage
+        .save(
+            List.of(
+                new GeneratedExercise(
+                    wordId,
+                    type,
+                    question,
+                    List.of(),
+                    difficulty,
+                    List.of(type == ExerciseType.SENTENCE_TRANSLATION ? "mon ami" : "朋友"),
+                    "朋友 signifie ami.",
+                    List.of("我的"))),
+            "openai")
+        .getFirst()
+        .id();
+  }
+
+  @Test
+  void reusesAnsweredPhrasesAsIndependentAttempts() throws Exception {
+    seed();
+    UUID original = storedPhrase(ExerciseType.SENTENCE_TRANSLATION, 2, "我的朋友");
+    storage.answer(original, "mon ami");
+    String request = "{\"count\":10,\"types\":[\"SENTENCE_TRANSLATION\"],\"difficulty\":null}";
+    var response =
+        mvc.perform(post("/api/exercises/reuse").contentType("application/json").content(request))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.source").value("reused"))
+            .andExpect(jsonPath("$.exercises.length()").value(1))
+            .andExpect(jsonPath("$.exercises[0].question").value("我的朋友"))
+            .andExpect(jsonPath("$.exercises[0].acceptedAnswers").doesNotExist())
+            .andExpect(jsonPath("$.exercises[0].explanation").doesNotExist())
+            .andReturn();
+    UUID attempt =
+        UUID.fromString(
+            mapper
+                .readTree(response.getResponse().getContentAsString())
+                .path("exercises")
+                .get(0)
+                .path("id")
+                .asText());
+    assertThat(attempt).isNotEqualTo(original);
+    assertThat(
+            jdbc.queryForObject(
+                "select source_exercise_id from exercise where id=?", UUID.class, attempt))
+        .isEqualTo(original);
+    assertThat(
+            jdbc.queryForObject(
+                "select answered_at is null from exercise where id=?", Boolean.class, attempt))
+        .isTrue();
+    assertThat(storage.answer(attempt, "mauvaise réponse").correct()).isFalse();
+    storage.answer(attempt, "mauvaise réponse");
+    assertThat(jdbc.queryForObject("select count(*) from review_event", Integer.class))
+        .isEqualTo(2);
+    assertThat(
+            jdbc.queryForObject("select correct from exercise where id=?", Boolean.class, original))
+        .isTrue();
+    assertThat(jdbc.queryForObject("select successes from progress", Long.class)).isEqualTo(1);
+    assertThat(jdbc.queryForObject("select errors from progress", Long.class)).isEqualTo(1);
+    mvc.perform(post("/api/exercises/reuse").contentType("application/json").content(request))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.exercises.length()").value(1));
+    assertThat(
+            jdbc.queryForObject(
+                "select count(*) from exercise where source_exercise_id=?",
+                Integer.class,
+                original))
+        .isEqualTo(2);
+    mvc.perform(get("/api/exercises/reusable"))
+        .andExpect(status().isOk())
+        .andExpect(
+            jsonPath("$[?(@.type == 'SENTENCE_TRANSLATION' && @.difficulty == 0)].available")
+                .value(org.hamcrest.Matchers.contains(1)));
+  }
+
+  @Test
+  void reuseFiltersDeduplicatesAndDoesNotGenerateMissingContent() throws Exception {
+    seed();
+    storedPhrase(ExerciseType.SENTENCE_TRANSLATION, 2, "我的朋友");
+    storedPhrase(ExerciseType.SENTENCE_TRANSLATION, 2, "我的朋友");
+    storedPhrase(ExerciseType.FILL_IN_THE_BLANK, 3, "我的___");
+    mvc.perform(
+            post("/api/exercises/reuse")
+                .contentType("application/json")
+                .content("{\"count\":20,\"types\":[\"SENTENCE_TRANSLATION\"],\"difficulty\":2}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.exercises.length()").value(1));
+    int sessions = jdbc.queryForObject("select count(*) from training_session", Integer.class);
+    mvc.perform(
+            post("/api/exercises/reuse")
+                .contentType("application/json")
+                .content("{\"count\":1,\"types\":[\"SENTENCE_TRANSLATION\"],\"difficulty\":5}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(
+            jsonPath("$.detail").value(org.hamcrest.Matchers.containsString("Aucune phrase")));
+    assertThat(jdbc.queryForObject("select count(*) from training_session", Integer.class))
+        .isEqualTo(sessions);
+    mvc.perform(
+            post("/api/exercises/reuse")
+                .contentType("application/json")
+                .content("{\"count\":1,\"types\":[\"FILL_IN_THE_BLANK\"],\"difficulty\":3}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.exercises[0].type").value("FILL_IN_THE_BLANK"));
+  }
+
+  @Test
+  void reuseValidatesRequestAndEmptyPool() throws Exception {
+    for (String body :
+        List.of(
+            "{\"count\":0,\"types\":[\"SENTENCE_TRANSLATION\"]}",
+            "{\"count\":1,\"types\":[\"HANZI_TO_FRENCH\"]}",
+            "{\"count\":1,\"types\":[]}",
+            "{\"count\":1,\"types\":[\"SENTENCE_TRANSLATION\"],\"difficulty\":6}",
+            "{\"count\":1,\"types\":[\"SENTENCE_TRANSLATION\"]}")) {
+      mvc.perform(post("/api/exercises/reuse").contentType("application/json").content(body))
+          .andExpect(status().isBadRequest());
+    }
+    assertThat(jdbc.queryForObject("select count(*) from training_session", Integer.class))
+        .isZero();
+  }
 }

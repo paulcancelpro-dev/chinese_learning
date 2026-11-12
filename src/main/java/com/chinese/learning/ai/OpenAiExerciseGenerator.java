@@ -99,7 +99,7 @@ public class OpenAiExerciseGenerator implements ExerciseGenerator {
               .build();
       var response = client.send(http, HttpResponse.BodyHandlers.ofString());
       if (response.statusCode() < 200 || response.statusCode() >= 300)
-        throw unavailable("Service OpenAI indisponible (HTTP " + response.statusCode() + ")");
+        throw upstreamError(response.statusCode(), response.body());
       if (response.body().length() > 200000) throw unavailable("Réponse OpenAI trop volumineuse");
       return decode(response.body());
     } catch (InterruptedException e) {
@@ -162,6 +162,53 @@ public class OpenAiExerciseGenerator implements ExerciseGenerator {
     } catch (RuntimeException e) {
       throw unavailable("JSON OpenAI invalide");
     }
+  }
+
+  private ApiException upstreamError(int status, String body) {
+    if (status == 429) {
+      String code = "";
+      String type = "";
+      // Only classify known identifiers. Never relay upstream messages or unknown values.
+      if (body != null && body.length() <= 200000) {
+        try {
+          var error = mapper.readTree(body).path("error");
+          code = error.path("code").asText("");
+          type = error.path("type").asText("");
+        } catch (RuntimeException ignored) {
+          // Non-JSON upstream errors retain the safe generic diagnostic.
+        }
+      }
+      String detail =
+          switch (code) {
+            case "billing_hard_limit_reached",
+                "billing_limit_reached",
+                "organization_spend_limit_exceeded",
+                "project_spend_limit_exceeded" ->
+                "Budget API OpenAI atteint : vérifiez les limites de dépenses du projet et de"
+                    + " l’organisation.";
+            case "organization_usage_limit_exceeded" ->
+                "Limite d’utilisation API OpenAI atteinte : vérifiez les limites de votre"
+                    + " organisation.";
+            case "insufficient_quota" ->
+                "Quota API OpenAI insuffisant : vérifiez les crédits, la facturation et les limites"
+                    + " du projet associé à la clé.";
+            case "rate_limit_exceeded", "slow_down" ->
+                "Limite de débit OpenAI atteinte : attendez avant de réessayer ou demandez moins"
+                    + " d’exercices.";
+            default -> {
+              if ("insufficient_quota".equals(type))
+                yield "Quota API OpenAI insuffisant : vérifiez les crédits, la facturation et les"
+                          + " limites du projet associé à la clé.";
+              if ("rate_limit_exceeded".equals(type))
+                yield "Limite de débit OpenAI atteinte : attendez avant de réessayer ou demandez"
+                          + " moins d’exercices.";
+              yield "OpenAI refuse la requête : limite de débit ou quota API atteint. Vérifiez la"
+                        + " facturation et les limites du projet.";
+            }
+          };
+      return unavailable(detail + " (HTTP 429)");
+    }
+    return unavailable("Service OpenAI indisponible (HTTP " + status + ")");
   }
 
   private static ApiException unavailable(String message) {

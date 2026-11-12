@@ -38,6 +38,22 @@ public class ExerciseStorage {
     return ExerciseView.of(exercises.findById(id).orElseThrow(ApiException::missing));
   }
 
+  public record Hint(String firstLetter) {}
+
+  @Transactional(readOnly = true)
+  public Hint hint(UUID id) {
+    var exercise = exercises.findById(id).orElseThrow(ApiException::missing);
+    String answer = exercise.acceptedAnswers.stream()
+        .map(String::strip)
+        .filter(value -> !value.isEmpty())
+        .sorted()
+        .findFirst()
+        .orElseThrow(() -> ApiException.bad("Aucun indice disponible pour cet exercice"));
+    var first = java.util.regex.Pattern.compile("\\X").matcher(answer);
+    first.find();
+    return new Hint(first.group());
+  }
+
   public record Correction(
       UUID exerciseId,
       boolean correct,
@@ -53,7 +69,8 @@ public class ExerciseStorage {
   public Correction answer(UUID id, String answer) {
     var e = exercises.lock(id).orElseThrow(ApiException::missing);
     if (e.answeredAt != null) {
-      if (!AnswerNormalizer.normalize(e.submittedAnswer).equals(AnswerNormalizer.normalize(answer)))
+      if (!AnswerNormalizer.normalize(e.submittedAnswer, e.type)
+          .equals(AnswerNormalizer.normalize(answer, e.type)))
         throw new ApiException(
             org.springframework.http.HttpStatus.CONFLICT,
             "Cet exercice a déjà été corrigé avec une autre réponse");
@@ -61,8 +78,8 @@ public class ExerciseStorage {
     }
     boolean correct =
         e.acceptedAnswers.stream()
-            .map(AnswerNormalizer::normalize)
-            .anyMatch(AnswerNormalizer.normalize(answer)::equals);
+            .map(expected -> AnswerNormalizer.normalize(expected, e.type))
+            .anyMatch(AnswerNormalizer.normalize(answer, e.type)::equals);
     Instant reviewedAt = progress.recordAnswer(e.id, e.wordId, e.type.skill(), correct, answer);
     e.correct = correct;
     e.submittedAnswer = answer;

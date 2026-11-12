@@ -10,10 +10,13 @@ import org.springframework.web.bind.annotation.*;
 public class ExerciseController {
   private final ExerciseService service;
   private final ExerciseStorage storage;
+  private final ExerciseReuseService reuseService;
 
-  public ExerciseController(ExerciseService service, ExerciseStorage storage) {
+  public ExerciseController(
+      ExerciseService service, ExerciseStorage storage, ExerciseReuseService reuseService) {
     this.service = service;
     this.storage = storage;
+    this.reuseService = reuseService;
   }
 
   public record Answer(@NotBlank @Size(max = 2000) String answer) {}
@@ -23,9 +26,24 @@ public class ExerciseController {
     return service.generate(request);
   }
 
+  @GetMapping("/reusable")
+  public java.util.List<ExerciseReuseService.Availability> reusable() {
+    return reuseService.available();
+  }
+
+  @PostMapping("/reuse")
+  public ExerciseService.Batch reuse(@Valid @RequestBody ReuseRequest request) {
+    return reuseService.reuse(request);
+  }
+
   @GetMapping("/{id}")
   public ExerciseView get(@PathVariable UUID id) {
     return storage.get(id);
+  }
+
+  @GetMapping("/{id}/hint")
+  public ExerciseStorage.Hint hint(@PathVariable UUID id) {
+    return storage.hint(id);
   }
 
   @PostMapping("/{id}/answers")

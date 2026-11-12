@@ -11,5 +11,7 @@ public interface ExerciseRepository extends JpaRepository<Exercise, UUID> {
   @Query("select e from Exercise e where e.id=:id")
   Optional<Exercise> lock(@Param("id") UUID id);
 
+  List<Exercise> findBySourceExerciseIdIsNullAndTypeIn(Collection<ExerciseType> types);
+
   Page<Exercise> findByAnsweredAtIsNotNull(Pageable page);
 }

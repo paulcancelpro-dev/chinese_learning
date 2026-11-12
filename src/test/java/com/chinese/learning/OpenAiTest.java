@@ -139,4 +139,48 @@ class OpenAiTest {
                     Map.of("content", List.of(Map.of("type", "output_text", "text", output)))))));
     assertThat(call()).containsExactly(item);
   }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "insufficient_quota,Quota API",
+    "project_spend_limit_exceeded,Budget API",
+    "organization_spend_limit_exceeded,Budget API",
+    "organization_usage_limit_exceeded,Limite d’utilisation",
+    "rate_limit_exceeded,Limite de débit"
+  })
+  void classifies429WithoutExposingUpstreamMessage(String code, String expected) {
+    response(
+        429,
+        mapper.writeValueAsString(
+            Map.of(
+                "error",
+                Map.of(
+                    "code",
+                    code,
+                    "type",
+                    "insufficient_quota",
+                    "message",
+                    "test-key private upstream details"))));
+    assertThatThrownBy(this::call)
+        .isInstanceOf(ApiException.class)
+        .hasMessageContaining(expected)
+        .hasMessageContaining("429")
+        .hasMessageNotContaining("test-key")
+        .hasMessageNotContaining("private");
+  }
+
+  @Test
+  void recognizesQuotaTypeWhenCodeIsMissing() {
+    response(429, "{\"error\":{\"code\":null,\"type\":\"insufficient_quota\"}}");
+    assertThatThrownBy(this::call).hasMessageContaining("Quota API");
+  }
+
+  @Test
+  void doesNotExposeUnknownErrorIdentifiers() {
+    response(429, "{\"error\":{\"code\":\"test-key\",\"type\":\"private\"}}");
+    assertThatThrownBy(this::call)
+        .hasMessageContaining("429")
+        .hasMessageNotContaining("test-key")
+        .hasMessageNotContaining("private");
+  }
 }

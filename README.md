@@ -136,6 +136,28 @@ Chaque exercice n’évalue que son mot cible et sa compétence, pas les mots in
 
 Une soumission corrige un exercice une seule fois. Même réponse répétée : correction initiale renvoyée, sans nouvelle progression. Réponse différente après correction : HTTP 409. Des verrous PostgreSQL sur l’exercice puis le mot sérialisent les soumissions concurrentes. La réponse, l’événement et la progression sont enregistrés dans une même transaction.
 
+## Réutiliser des phrases sans OpenAI
+
+Dans le frontend, ouvrir **Entraînement → Phrases enregistrées — sans IA**. Choisir les traductions de phrases et/ou les phrases à compléter, la difficulté (ou tous les niveaux), puis 1 à 20 exercices. La réserve et la taille effective de la séance sont affichées avant de commencer.
+
+Ce mode fonctionne même avec `OPENAI_ENABLED=false` ou sans clé API. Il ne dépend ni du générateur, ni du budget OpenAI. Les phrases déjà générées avant cette mise à jour sont automatiquement disponibles après la migration V2. Les phrases déjà corrigées peuvent être refaites.
+
+```sh
+curl -sS http://localhost:8080/api/exercises/reusable
+curl -sS -X POST http://localhost:8080/api/exercises/reuse \
+  -H 'Content-Type: application/json' \
+  -d '{"count":1,"types":["SENTENCE_TRANSLATION"],"difficulty":null}'
+```
+
+- `GET /api/exercises/reusable` retourne les compteurs `{type, difficulty, available}`. La difficulté `0` désigne le total dédupliqué de tous les niveaux pour ce type.
+- `POST /api/exercises/reuse` accepte `count` (1–20), `types` (uniquement `SENTENCE_TRANSLATION` et `FILL_IN_THE_BLANK`), `difficulty` (1–5 ou null/absente pour tous les niveaux).
+- La réponse conserve le contrat des séances avec `source: "reused"` et les exercices publics sans correction.
+- Chaque exercice réutilisé est une **nouvelle tentative** avec son UUID et sa séance, reliée à l’original par `source_exercise_id`. La phrase et sa correction sont copiées à l’identique. Les anciennes réponses ne sont ni modifiées ni effacées.
+- Une nouvelle tentative met à jour la progression normalement ; une double soumission de cette tentative reste idempotente.
+- La sélection est aléatoire, sans répétition du même couple type/phrase dans une séance. Les copies réutilisées n’alimentent pas la réserve. Si moins de phrases sont disponibles que demandé, la séance contient seulement les phrases disponibles.
+- Une réserve vide renvoie HTTP 400 avec une explication, sans appel OpenAI ni création de séance. Générer d’abord des phrases avec OpenAI via le mode habituel pour alimenter la réserve.
+- La suppression d’un mot supprime également ses phrases et leurs tentatives, conformément au comportement de suppression existant.
+
 ## OpenAI
 
 Activer explicitement :
@@ -155,11 +177,11 @@ Le backend sélectionne les mots avant l’appel réseau et ferme la transaction
 
 Limites : 1 à 20 exercices, difficulté 1 à 5, jusqu’à 20 mots de contexte (au moins 4 candidats pour les QCM si disponibles), entrée OpenAI ≤ 24 000 caractères, sortie ≤ 6 000 tokens par défaut, délai 30 secondes, une génération simultanée, 5 appels OpenAI/minute/processus par défaut. `OPENAI_MAX_OUTPUT_TOKENS` et `OPENAI_REQUESTS_PER_MINUTE` sont configurables. Aucune relance automatique payante. Le compteur minute se réinitialise au redémarrage : configurer également les limites de budget du projet OpenAI ; ce n’est pas un plafond monétaire global.
 
-Le générateur local couvre `HANZI_TO_FRENCH`, `HANZI_TO_PINYIN`, `PINYIN_TO_HANZI`, `MULTIPLE_CHOICE`. Le QCM exige au moins deux mots de significations distinctes. Les homophones sont désambiguïsés par une traduction française. Sans OpenAI, demander un exercice de phrase ou à trou renvoie HTTP 400.
+Le générateur local couvre `HANZI_TO_FRENCH`, `HANZI_TO_PINYIN`, `PINYIN_TO_HANZI`, `MULTIPLE_CHOICE`. Le QCM exige au moins deux mots de significations distinctes. Les homophones sont désambiguïsés par une traduction française. Sans OpenAI, demander la génération d’une nouvelle phrase ou d’un nouveau texte à trou via `/generate` renvoie HTTP 400 ; la réutilisation via `/reuse` reste disponible.
 
-Avec OpenAI activé, un échec ou une sortie invalide déclenche le secours local uniquement si **tous** les types demandés sont simples. `source` indique `local`, `openai` ou `local_fallback`. Les demandes avancées échouent en HTTP 502 si OpenAI ne peut pas produire un résultat valide. La limite de débit renvoie HTTP 429.
+Avec OpenAI activé, un échec ou une sortie invalide déclenche le secours local uniquement si **tous** les types demandés sont simples. `source` indique `local`, `openai` ou `local_fallback` pour une génération, et `reused` pour une séance issue de la réserve. Les demandes avancées échouent en HTTP 502 si OpenAI ne peut pas produire un résultat valide. La limite de débit renvoie HTTP 429.
 
-La correction est entièrement Java : normalisation Unicode NFKC, casse, espaces, apostrophe typographique et ponctuation finale. Les tons du pinyin restent significatifs. Pour les traductions de phrases, les variantes acceptées sont préparées lors de la génération. **Pas de correcteur sémantique IA supplémentaire** : une paraphrase correcte absente des variantes peut être refusée. Cela évite un second appel payant et garde la correction reproductible.
+La correction est entièrement Java : normalisation Unicode NFKC, casse, espaces, apostrophe typographique et ponctuation finale. Pour les réponses `HANZI_TO_PINYIN`, les marques de ton sont ignorées : `pengyou` est accepté pour `péngyou`, et `shui` pour `shuǐ`. Les accents restent affichés dans les corrections et conservés dans le vocabulaire. Le tréma de `ü` est conservé (il distingue cette lettre de `u`). Cette tolérance s’applique aussi aux soumissions répétées, sans modifier la correction des réponses françaises. Pour les traductions de phrases, les variantes acceptées sont préparées lors de la génération. **Pas de correcteur sémantique IA supplémentaire** : une paraphrase correcte absente des variantes peut être refusée. Cela évite un second appel payant et garde la correction reproductible.
 
 ## API
 
