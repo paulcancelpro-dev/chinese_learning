@@ -16,7 +16,8 @@ class ExerciseReuseTest {
     var request = new ReuseRequest(1, List.of(ExerciseType.SENTENCE_TRANSLATION), null);
     var expected = new ExerciseService.Batch("reused", List.of());
     when(reuse.reuse(request)).thenReturn(expected);
-    var controller = new ExerciseController(generator, storage, reuse);
+    var controller =
+        new ExerciseController(generator, storage, reuse, mock(ManualExerciseService.class));
     assertThat(controller.reuse(request)).isSameAs(expected);
     verify(reuse).reuse(request);
     verifyNoInteractions(generator, storage);

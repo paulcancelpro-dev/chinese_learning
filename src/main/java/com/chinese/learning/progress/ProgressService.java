@@ -73,6 +73,27 @@ public class ProgressService {
     events.save(new ReviewEvent(eventId, wordId, skill, correct, time, answer));
   }
 
+  public void acceptAnswer(UUID eventId, UUID wordId, Skill skill) {
+    words.lock(wordId).orElseThrow(ApiException::missing);
+    var history = events.findByWordIdAndSkillOrderByReviewedAtAscIdAsc(wordId, skill);
+    var event =
+        history.stream()
+            .filter(e -> e.id.equals(eventId))
+            .findFirst()
+            .orElseThrow(ApiException::missing);
+    if (event.correct) return;
+    event.correct = true;
+
+    var state = progress.findByWordIdAndSkill(wordId, skill).orElseThrow(ApiException::missing);
+    state.level = null;
+    state.successes = 0;
+    state.errors = 0;
+    state.streak = 0;
+    state.lastReview = null;
+    state.nextReview = null;
+    for (var review : history) policy.apply(state, review.correct, review.reviewedAt);
+  }
+
   public Map<String, Integer> importProgress(JsonNode body) {
     var input =
         importer.parse(body, "progress", ImportedReview.class).stream()

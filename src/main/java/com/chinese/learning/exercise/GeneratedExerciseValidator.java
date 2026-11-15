@@ -10,6 +10,15 @@ public class GeneratedExerciseValidator {
   public void validate(
       List<GeneratedExercise> exercises, GenerationRequest request, List<Word> words) {
     if (exercises == null || exercises.size() != request.count()) fail();
+    validateContent(exercises, request, words);
+  }
+
+  public void validateImported(List<GeneratedExercise> exercises, List<Word> words) {
+    validateContent(exercises, null, words);
+  }
+
+  private void validateContent(
+      List<GeneratedExercise> exercises, GenerationRequest request, List<Word> words) {
     Map<UUID, Word> allowed = new HashMap<>();
     Set<Integer> known = new HashSet<>();
     words.forEach(
@@ -20,8 +29,11 @@ public class GeneratedExerciseValidator {
     for (var e : exercises) {
       if (e == null
           || !allowed.containsKey(e.wordId())
-          || !request.types().contains(e.type())
-          || e.difficulty() != request.difficulty()
+          || e.type() == null
+          || e.difficulty() < 1
+          || e.difficulty() > 5
+          || (request != null
+              && (!request.types().contains(e.type()) || e.difficulty() != request.difficulty()))
           || !valid(e.question(), 1000)
           || !valid(e.explanation(), 2000)
           || e.choices() == null
@@ -50,7 +62,11 @@ public class GeneratedExerciseValidator {
               || answers.stream().anyMatch(a -> !a.equals(AnswerNormalizer.normalize(w.pinyin)))))
         fail();
       if (e.type() == ExerciseType.PINYIN_TO_HANZI
-          && (!e.question().equals(w.pinyin + " — " + w.translations.iterator().next())
+          && (!e.question()
+                  .equals(
+                      w.pinyin
+                          + " — "
+                          + w.translations.stream().min(String::compareTo).orElseThrow())
               || answers.stream().anyMatch(a -> !a.equals(w.hanzi)))) fail();
       if (e.type() == ExerciseType.MULTIPLE_CHOICE) {
         if (e.question().contains(w.hanzi)
@@ -87,11 +103,11 @@ public class GeneratedExerciseValidator {
   }
 
   private static boolean valid(String s, int max) {
-    return s != null && !s.isBlank() && s.length() <= max;
+    return s != null && !s.isBlank() && s.length() <= max && s.indexOf(0) < 0;
   }
 
   private static void fail() {
-    throw new ApiException(
-        org.springframework.http.HttpStatus.BAD_GATEWAY, "Exercices générés invalides");
+    throw ApiException.bad(
+        "Exercice invalide : vérifiez le mot cible, la difficulté, la question et les réponses.");
   }
 }

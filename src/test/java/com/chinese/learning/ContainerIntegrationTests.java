@@ -18,6 +18,5 @@ class ContainerIntegrationTests extends BasePostgresScenarios {
     r.add("spring.datasource.url", postgres::getJdbcUrl);
     r.add("spring.datasource.username", postgres::getUsername);
     r.add("spring.datasource.password", postgres::getPassword);
-    r.add("app.openai.enabled", () -> false);
   }
 }

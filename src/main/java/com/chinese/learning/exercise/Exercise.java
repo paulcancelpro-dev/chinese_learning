@@ -22,6 +22,9 @@ public class Exercise {
 
   public int difficulty;
 
+  @Column(length = 2000)
+  public String pinyinHint;
+
   @ElementCollection
   @CollectionTable(name = "exercise_choice", joinColumns = @JoinColumn(name = "exercise_id"))
   @OrderColumn(name = "position")
@@ -57,6 +60,7 @@ public class Exercise {
     type = e.type();
     question = e.question();
     difficulty = e.difficulty();
+    pinyinHint = e.pinyinHint();
     choices.addAll(e.choices());
     acceptedAnswers.addAll(e.acceptedAnswers());
     newVocabulary.addAll(e.newVocabulary());

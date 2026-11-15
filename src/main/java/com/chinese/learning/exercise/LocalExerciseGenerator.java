@@ -9,7 +9,7 @@ import org.springframework.stereotype.Component;
 public class LocalExerciseGenerator implements ExerciseGenerator {
   public List<GeneratedExercise> generate(GenerationRequest request, List<Word> words) {
     if (request.types().stream().anyMatch(t -> !t.simple()))
-      throw ApiException.bad("Les phrases et textes à trous nécessitent OpenAI");
+      throw ApiException.bad("Importez un fichier JSON pour les phrases et les textes à trous");
     var result = new ArrayList<GeneratedExercise>();
     for (int i = 0; i < request.count(); i++) {
       var w = words.get(i % words.size());

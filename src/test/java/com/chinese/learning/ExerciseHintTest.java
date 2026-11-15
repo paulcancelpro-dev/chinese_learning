@@ -1,22 +1,32 @@
 package com.chinese.learning;
 
+import static org.assertj.core.api.Assertions.*;
+import static org.mockito.Mockito.*;
+
 import com.chinese.learning.exercise.*;
 import com.chinese.learning.progress.ProgressService;
 import java.time.Clock;
 import java.util.*;
 import org.junit.jupiter.api.Test;
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.Mockito.*;
 
 class ExerciseHintTest {
-  @Test void hintReturnsOnlyFirstGraphemeWithoutRecordingAnswer() {
+  @Test
+  void hintReturnsOnlyFirstGraphemeWithoutRecordingAnswer() {
     var repository = mock(ExerciseRepository.class);
     var progress = mock(ProgressService.class);
     var exercise = mock(Exercise.class);
+    exercise.type = ExerciseType.HANZI_TO_FRENCH;
     exercise.acceptedAnswers = List.of("e\u0301cole", "étude");
     var id = UUID.randomUUID();
     when(repository.findById(id)).thenReturn(Optional.of(exercise));
-    var storage = new ExerciseStorage(repository, mock(SessionRepository.class), progress, Clock.systemUTC());
+    var storage =
+        new ExerciseStorage(
+            repository,
+            mock(SessionRepository.class),
+            progress,
+            Clock.systemUTC(),
+            mock(ExercisePresentation.class),
+            mock(com.chinese.learning.vocabulary.WordRepository.class));
     assertThat(storage.hint(id).firstLetter()).isEqualTo("e\u0301");
     assertThat(exercise.answeredAt).isNull();
     verifyNoInteractions(progress);
@@ -24,11 +34,20 @@ class ExerciseHintTest {
     verify(repository, never()).save(any());
   }
 
-  @Test void missingExerciseDoesNotProduceAHint() {
+  @Test
+  void missingExerciseDoesNotProduceAHint() {
     var repository = mock(ExerciseRepository.class);
     var id = UUID.randomUUID();
     when(repository.findById(id)).thenReturn(Optional.empty());
-    var storage = new ExerciseStorage(repository, mock(SessionRepository.class), mock(ProgressService.class), Clock.systemUTC());
-    assertThatThrownBy(() -> storage.hint(id)).isInstanceOf(com.chinese.learning.common.ApiException.class);
+    var storage =
+        new ExerciseStorage(
+            repository,
+            mock(SessionRepository.class),
+            mock(ProgressService.class),
+            Clock.systemUTC(),
+            mock(ExercisePresentation.class),
+            mock(com.chinese.learning.vocabulary.WordRepository.class));
+    assertThatThrownBy(() -> storage.hint(id))
+        .isInstanceOf(com.chinese.learning.common.ApiException.class);
   }
 }

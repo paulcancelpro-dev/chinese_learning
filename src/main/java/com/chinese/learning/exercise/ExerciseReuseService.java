@@ -6,7 +6,7 @@ import java.util.*;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Replays stored content only. No dependency on a generator or the OpenAI budget. */
+/** Replays stored content only. */
 @Service
 @Transactional
 public class ExerciseReuseService {
@@ -15,12 +15,17 @@ public class ExerciseReuseService {
   private final ExerciseRepository exercises;
   private final SessionRepository sessions;
   private final Clock clock;
+  private final ExercisePresentation presentation;
 
   public ExerciseReuseService(
-      ExerciseRepository exercises, SessionRepository sessions, Clock clock) {
+      ExerciseRepository exercises,
+      SessionRepository sessions,
+      Clock clock,
+      ExercisePresentation presentation) {
     this.exercises = exercises;
     this.sessions = sessions;
     this.clock = clock;
+    this.presentation = presentation;
   }
 
   public record Availability(ExerciseType type, int difficulty, long available) {}
@@ -59,12 +64,24 @@ public class ExerciseReuseService {
     candidates.forEach(e -> unique.putIfAbsent(e.type.name() + "\n" + e.question, e));
     if (unique.isEmpty())
       throw ApiException.bad(
-          "Aucune phrase enregistrée pour ces critères. Générez d’abord des phrases avec OpenAI ou"
+          "Aucune phrase enregistrée pour ces critères. Importez d’abord des phrases ou"
               + " changez les filtres.");
+    return newAttempts(unique.values().stream().limit(request.count()).toList());
+  }
+
+  public ExerciseService.Batch replay(UUID id) {
+    var exercise = exercises.findById(id).orElseThrow(ApiException::missing);
+    var original =
+        exercise.sourceExerciseId == null
+            ? exercise
+            : exercises.findById(exercise.sourceExerciseId).orElseThrow(ApiException::missing);
+    return newAttempts(List.of(original));
+  }
+
+  private ExerciseService.Batch newAttempts(List<Exercise> originals) {
     var session = sessions.save(new TrainingSession(clock.instant(), "reused"));
     var attempts =
-        unique.values().stream()
-            .limit(request.count())
+        originals.stream()
             .map(
                 original -> {
                   var content =
@@ -76,10 +93,11 @@ public class ExerciseReuseService {
                           original.difficulty,
                           List.copyOf(original.acceptedAnswers),
                           original.explanation,
-                          List.copyOf(original.newVocabulary));
+                          List.copyOf(original.newVocabulary),
+                          original.pinyinHint);
                   var attempt = new Exercise(session.id, content);
                   attempt.sourceExerciseId = original.id;
-                  return ExerciseView.of(exercises.save(attempt));
+                  return presentation.view(exercises.save(attempt));
                 })
             .toList();
     return new ExerciseService.Batch("reused", attempts);

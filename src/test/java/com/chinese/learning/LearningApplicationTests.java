@@ -19,6 +19,5 @@ class LearningApplicationTests extends BasePostgresScenarios {
     r.add(
         "spring.datasource.password",
         () -> System.getenv().getOrDefault("TEST_DATABASE_PASSWORD", ""));
-    r.add("app.openai.enabled", () -> false);
   }
 }

@@ -7,6 +7,9 @@ import org.springframework.data.jpa.repository.*;
 import org.springframework.data.repository.query.Param;
 
 public interface WordRepository extends JpaRepository<Word, UUID> {
+  @Query("select distinct w.hanzi from Word w order by w.hanzi")
+  List<String> findDistinctHanzi();
+
   Optional<Word> findByHanziAndPinyin(String hanzi, String pinyin);
 
   @Query(

@@ -292,7 +292,7 @@ abstract class BasePostgresScenarios {
                     List.of(type == ExerciseType.SENTENCE_TRANSLATION ? "mon ami" : "朋友"),
                     "朋友 signifie ami.",
                     List.of("我的"))),
-            "openai")
+            "imported")
         .getFirst()
         .id();
   }
@@ -381,7 +381,46 @@ abstract class BasePostgresScenarios {
                 .contentType("application/json")
                 .content("{\"count\":1,\"types\":[\"FILL_IN_THE_BLANK\"],\"difficulty\":3}"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("$.exercises[0].type").value("FILL_IN_THE_BLANK"));
+        .andExpect(jsonPath("$.exercises[0].type").value("FILL_IN_THE_BLANK"))
+        .andExpect(
+            jsonPath("$.exercises[0].choices")
+                .value(org.hamcrest.Matchers.containsInAnyOrder("朋友", "水")));
+  }
+
+  @Test
+  void fillsThePinyinGapOnlyInTheCorrection() throws Exception {
+    seed();
+    UUID wordId = jdbc.queryForObject("select id from word where hanzi='朋友'", UUID.class);
+    UUID id =
+        storage
+            .save(
+                List.of(
+                    new GeneratedExercise(
+                        wordId,
+                        ExerciseType.FILL_IN_THE_BLANK,
+                        "我的___",
+                        List.of(),
+                        2,
+                        List.of("朋友"),
+                        "朋友 signifie ami.",
+                        List.of("我的"),
+                        "wǒ de ___")),
+                "imported")
+            .getFirst()
+            .id();
+    mvc.perform(get("/api/exercises/" + id + "/hint"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.pinyin").value("wǒ de ___"));
+    mvc.perform(
+            post("/api/exercises/" + id + "/answers")
+                .contentType("application/json")
+                .content(
+                    """
+                    {"answer":"水"}
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.correct").value(false))
+        .andExpect(jsonPath("$.pinyin").value("wǒ de péngyou"));
   }
 
   @Test
@@ -398,5 +437,130 @@ abstract class BasePostgresScenarios {
     }
     assertThat(jdbc.queryForObject("select count(*) from training_session", Integer.class))
         .isZero();
+  }
+
+  @Test
+  void acceptsAnIncorrectVocabularyAnswerAndRejectsVocabularyInAiPrompt() throws Exception {
+    seed();
+    String request =
+        """
+        {"count":1,"types":["HANZI_TO_FRENCH"],"difficulty":2,"strategy":"RANDOM"}
+        """;
+    mvc.perform(post("/api/exercises/prompt").contentType("application/json").content(request))
+        .andExpect(status().isBadRequest());
+    var generated =
+        mvc.perform(post("/api/exercises/generate").contentType("application/json").content(request))
+            .andExpect(status().isOk())
+            .andReturn();
+    String id =
+        mapper.readTree(generated.getResponse().getContentAsString())
+            .path("exercises").get(0).path("id").asText();
+    String accept = "/api/exercises/" + id + "/accept-answer";
+    mvc.perform(post(accept)).andExpect(status().isBadRequest());
+    mvc.perform(
+            post("/api/exercises/" + id + "/answers")
+                .contentType("application/json")
+                .content("{\"answer\":\"réponse volontairement incorrecte\"}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.correct").value(false));
+    for (int i = 0; i < 2; i++) {
+      mvc.perform(post(accept))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.correct").value(true));
+    }
+    assertThat(jdbc.queryForObject("select count(*) from review_event", Integer.class)).isEqualTo(1);
+    assertThat(jdbc.queryForObject("select successes from progress", Long.class)).isEqualTo(1);
+    assertThat(jdbc.queryForObject("select errors from progress", Long.class)).isZero();
+  }
+
+  @Test
+  void preparesImportsAndReplaysManualExercises() throws Exception {
+    seed();
+    UUID wordId = jdbc.queryForObject("select id from word where hanzi='朋友'", UUID.class);
+    mvc.perform(
+            post("/api/exercises/prompt")
+                .contentType("application/json")
+                .content(
+                    """
+                    {"count":1,"types":["SENTENCE_TRANSLATION"],"difficulty":2,"strategy":"RANDOM"}
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(
+            jsonPath("$.prompt").value(org.hamcrest.Matchers.containsString(wordId.toString())));
+    var item =
+        new GeneratedExercise(
+            wordId,
+            ExerciseType.SENTENCE_TRANSLATION,
+            "我的朋友",
+            List.of(),
+            2,
+            List.of("mon ami"),
+            "朋友 signifie ami.",
+            List.of("我的"),
+            "wǒ de péngyou");
+    String body = mapper.writeValueAsString(Map.of("exercises", List.of(item)));
+    mvc.perform(
+            post("/api/exercises/import")
+                .contentType("application/json")
+                .content(body.replace("\"difficulty\":2", "\"difficulty\":\"2\"")))
+        .andExpect(status().isBadRequest());
+    assertThat(jdbc.queryForObject("select count(*) from exercise", Integer.class)).isZero();
+    var imported =
+        mvc.perform(post("/api/exercises/import").contentType("application/json").content(body))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.source").value("imported"))
+            .andExpect(jsonPath("$.exercises[0].acceptedAnswers").doesNotExist())
+            .andReturn();
+    UUID original =
+        UUID.fromString(
+            mapper
+                .readTree(imported.getResponse().getContentAsString())
+                .path("exercises")
+                .get(0)
+                .path("id")
+                .asText());
+    mvc.perform(get("/api/exercises/" + original + "/hint"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.pinyin").value("wǒ de péngyou"));
+    mvc.perform(
+            post("/api/exercises/" + original + "/answers")
+                .contentType("application/json")
+                .content(
+                    """
+                    {"answer":"c’est mon ami"}
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.correct").value(false))
+        .andExpect(jsonPath("$.pinyin").value("wǒ de péngyou"));
+    for (int i = 0; i < 2; i++) {
+      mvc.perform(post("/api/exercises/" + original + "/accept-translation"))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.correct").value(true));
+    }
+    assertThat(jdbc.queryForObject("select count(*) from review_event", Integer.class))
+        .isEqualTo(1);
+    assertThat(
+            jdbc.queryForObject(
+                "select correct from review_event where id=?", Boolean.class, original))
+        .isTrue();
+    assertThat(jdbc.queryForObject("select successes from progress", Long.class)).isEqualTo(1);
+    assertThat(jdbc.queryForObject("select errors from progress", Long.class)).isZero();
+    mvc.perform(post("/api/exercises/" + original + "/replay"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.exercises[0].question").value("我的朋友"))
+        .andExpect(
+            jsonPath("$.exercises[0].id").value(org.hamcrest.Matchers.not(original.toString())));
+    assertThat(
+            jdbc.queryForObject(
+                "select count(*) from exercise where source_exercise_id=?",
+                Integer.class,
+                original))
+        .isEqualTo(1);
+    UUID replay =
+        jdbc.queryForObject(
+            "select id from exercise where source_exercise_id=?", UUID.class, original);
+    mvc.perform(get("/api/exercises/" + replay + "/hint"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.pinyin").value("wǒ de péngyou"));
   }
 }

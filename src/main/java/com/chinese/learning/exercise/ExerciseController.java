@@ -11,12 +11,17 @@ public class ExerciseController {
   private final ExerciseService service;
   private final ExerciseStorage storage;
   private final ExerciseReuseService reuseService;
+  private final ManualExerciseService manual;
 
   public ExerciseController(
-      ExerciseService service, ExerciseStorage storage, ExerciseReuseService reuseService) {
+      ExerciseService service,
+      ExerciseStorage storage,
+      ExerciseReuseService reuseService,
+      ManualExerciseService manual) {
     this.service = service;
     this.storage = storage;
     this.reuseService = reuseService;
+    this.manual = manual;
   }
 
   public record Answer(@NotBlank @Size(max = 2000) String answer) {}
@@ -24,6 +29,21 @@ public class ExerciseController {
   @PostMapping("/generate")
   public ExerciseService.Batch generate(@Valid @RequestBody GenerationRequest request) {
     return service.generate(request);
+  }
+
+  @PostMapping("/prompt")
+  public ManualExerciseService.Prompt prompt(@Valid @RequestBody GenerationRequest request) {
+    return manual.prompt(request);
+  }
+
+  @PostMapping("/import")
+  public ExerciseService.Batch importExercises(@RequestBody tools.jackson.databind.JsonNode body) {
+    return manual.importExercises(body);
+  }
+
+  @PostMapping("/{id}/replay")
+  public ExerciseService.Batch replay(@PathVariable UUID id) {
+    return reuseService.replay(id);
   }
 
   @GetMapping("/reusable")
@@ -50,6 +70,11 @@ public class ExerciseController {
   public ExerciseStorage.Correction answer(
       @PathVariable UUID id, @Valid @RequestBody Answer answer) {
     return storage.answer(id, answer.answer());
+  }
+
+  @PostMapping({"/{id}/accept-answer", "/{id}/accept-translation"})
+  public ExerciseStorage.Correction acceptAnswer(@PathVariable UUID id) {
+    return storage.acceptAnswer(id);
   }
 
   @GetMapping("/history")

@@ -1,6 +1,6 @@
 # Backend d’apprentissage du mandarin
 
-Backend mono-utilisateur Spring Boot **4.1.2**, Java **25**, Maven, PostgreSQL, JPA et Flyway. Les versions du projet initial ont été conservées. Le mode local fonctionne sans clé OpenAI.
+Backend mono-utilisateur Spring Boot **4.1.2**, Java **25**, Maven, PostgreSQL, JPA et Flyway. Les versions du projet initial ont été conservées.
 
 ## Démarrage
 
@@ -136,11 +136,10 @@ Chaque exercice n’évalue que son mot cible et sa compétence, pas les mots in
 
 Une soumission corrige un exercice une seule fois. Même réponse répétée : correction initiale renvoyée, sans nouvelle progression. Réponse différente après correction : HTTP 409. Des verrous PostgreSQL sur l’exercice puis le mot sérialisent les soumissions concurrentes. La réponse, l’événement et la progression sont enregistrés dans une même transaction.
 
-## Réutiliser des phrases sans OpenAI
+## Réutiliser des phrases enregistrées
 
 Dans le frontend, ouvrir **Entraînement → Phrases enregistrées — sans IA**. Choisir les traductions de phrases et/ou les phrases à compléter, la difficulté (ou tous les niveaux), puis 1 à 20 exercices. La réserve et la taille effective de la séance sont affichées avant de commencer.
 
-Ce mode fonctionne même avec `OPENAI_ENABLED=false` ou sans clé API. Il ne dépend ni du générateur, ni du budget OpenAI. Les phrases déjà générées avant cette mise à jour sont automatiquement disponibles après la migration V2. Les phrases déjà corrigées peuvent être refaites.
 
 ```sh
 curl -sS http://localhost:8080/api/exercises/reusable
@@ -155,31 +154,19 @@ curl -sS -X POST http://localhost:8080/api/exercises/reuse \
 - Chaque exercice réutilisé est une **nouvelle tentative** avec son UUID et sa séance, reliée à l’original par `source_exercise_id`. La phrase et sa correction sont copiées à l’identique. Les anciennes réponses ne sont ni modifiées ni effacées.
 - Une nouvelle tentative met à jour la progression normalement ; une double soumission de cette tentative reste idempotente.
 - La sélection est aléatoire, sans répétition du même couple type/phrase dans une séance. Les copies réutilisées n’alimentent pas la réserve. Si moins de phrases sont disponibles que demandé, la séance contient seulement les phrases disponibles.
-- Une réserve vide renvoie HTTP 400 avec une explication, sans appel OpenAI ni création de séance. Générer d’abord des phrases avec OpenAI via le mode habituel pour alimenter la réserve.
+- Une réserve vide renvoie HTTP 400 avec une explication, sans créer de séance. Importer des phrases pour alimenter la réserve.
 - La suppression d’un mot supprime également ses phrases et leurs tentatives, conformément au comportement de suppression existant.
 
-## OpenAI
+## Préparer et importer des exercices
 
-Activer explicitement :
+Dans **Entraînement → Prompt et import JSON**, choisis les types et la difficulté, puis copie le prompt dans ChatGPT. Télécharge le fichier `exercices.json` proposé ou enregistre le JSON brut dans un fichier, puis importe-le pour démarrer la séance.
 
-```sh
-export OPENAI_ENABLED=true
-export OPENAI_API_KEY='votre-cle-locale'
-export OPENAI_MODEL=gpt-4o-mini
-./mvnw spring-boot:run
-```
-
-Le modèle est configurable ; choisir un modèle disponible sur votre compte qui prend en charge Responses et Structured Outputs. La clé reste côté serveur. Elle n’est jamais renvoyée au client ni journalisée par le code. Les erreurs distantes ne relaient pas le corps brut d’OpenAI.
-
-L’intégration utilise `POST /v1/responses`, `store: false` et `text.format` avec `type: json_schema`, `strict: true`, toutes les propriétés requises et `additionalProperties: false`, conformément à la [documentation officielle Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs?api-mode=responses).
-
-Le backend sélectionne les mots avant l’appel réseau et ferme la transaction de lecture avant cet appel. L’API distante reçoit les mots, traductions et paramètres de génération. Le JSON est vérifié côté serveur : structure/types, nombre d’exercices, cibles autorisées, types demandés, difficulté, tailles, corrections des exercices simples, unicité des choix et une seule bonne réponse de QCM, vocabulaire nouveau déclaré. Un JSON valide ne garantit pas à lui seul une phrase linguistiquement correcte.
-
-Limites : 1 à 20 exercices, difficulté 1 à 5, jusqu’à 20 mots de contexte (au moins 4 candidats pour les QCM si disponibles), entrée OpenAI ≤ 24 000 caractères, sortie ≤ 6 000 tokens par défaut, délai 30 secondes, une génération simultanée, 5 appels OpenAI/minute/processus par défaut. `OPENAI_MAX_OUTPUT_TOKENS` et `OPENAI_REQUESTS_PER_MINUTE` sont configurables. Aucune relance automatique payante. Le compteur minute se réinitialise au redémarrage : configurer également les limites de budget du projet OpenAI ; ce n’est pas un plafond monétaire global.
-
-Le générateur local couvre `HANZI_TO_FRENCH`, `HANZI_TO_PINYIN`, `PINYIN_TO_HANZI`, `MULTIPLE_CHOICE`. Le QCM exige au moins deux mots de significations distinctes. Les homophones sont désambiguïsés par une traduction française. Sans OpenAI, demander la génération d’une nouvelle phrase ou d’un nouveau texte à trou via `/generate` renvoie HTTP 400 ; la réutilisation via `/reuse` reste disponible.
-
-Avec OpenAI activé, un échec ou une sortie invalide déclenche le secours local uniquement si **tous** les types demandés sont simples. `source` indique `local`, `openai` ou `local_fallback` pour une génération, et `reused` pour une séance issue de la réserve. Les demandes avancées échouent en HTTP 502 si OpenAI ne peut pas produire un résultat valide. La limite de débit renvoie HTTP 429.
+- `POST /api/exercises/{id}/accept-answer` valide manuellement une réponse déjà soumise, pour tous les types. La progression est recalculée à partir de la tentative existante.
+- `POST /api/exercises/prompt` accepte les mêmes paramètres que `/generate` avec les types `SENTENCE_TRANSLATION` et `FILL_IN_THE_BLANK` uniquement. Il retourne `{"prompt":"..."}` avec le vocabulaire sélectionné et le schéma attendu.
+- `POST /api/exercises/import` reçoit le contenu du fichier avec `Content-Type: application/json`. Le document contient uniquement `exercises`, un tableau de 1 à 20 objets. Chaque objet contient exactement `wordId`, `type`, `question`, `choices`, `difficulty`, `acceptedAnswers`, `explanation` et `newVocabulary`. Seules les traductions de phrases et les phrases à compléter sont importables. Ajoute le champ obligatoire `pinyinHint` avec le pinyin de la phrase. Pour une phrase à compléter, conserve `___` dans le pinyin. Les phrases déjà enregistrées sans cet indice doivent être réimportées pour en bénéficier. Les identifiants doivent correspondre au vocabulaire enregistré. Un lot invalide est rejeté intégralement avec HTTP 400.
+- L’import renvoie une séance `source: "imported"`. Les corrections restent dans la base et sont communiquées après réponse.
+- `POST /api/exercises/{id}/replay` crée une nouvelle tentative avec la même question et la même correction. Le bouton **Rejouer cet exercice** est disponible dans le bilan. Les phrases importées apparaissent aussi dans la réserve de phrases.
+- `POST /api/exercises/generate` produit localement les quatre types simples : hanzi vers français, hanzi vers pinyin, pinyin vers hanzi et QCM.
 
 La correction est entièrement Java : normalisation Unicode NFKC, casse, espaces, apostrophe typographique et ponctuation finale. Pour les réponses `HANZI_TO_PINYIN`, les marques de ton sont ignorées : `pengyou` est accepté pour `péngyou`, et `shui` pour `shuǐ`. Les accents restent affichés dans les corrections et conservés dans le vocabulaire. Le tréma de `ü` est conservé (il distingue cette lettre de `u`). Cette tolérance s’applique aussi aux soumissions répétées, sans modifier la correction des réponses françaises. Pour les traductions de phrases, les variantes acceptées sont préparées lors de la génération. **Pas de correcteur sémantique IA supplémentaire** : une paraphrase correcte absente des variantes peut être refusée. Cela évite un second appel payant et garde la correction reproductible.
 
@@ -204,7 +191,7 @@ La correction est entièrement Java : normalisation Unicode NFKC, casse, espaces
 | GET | `/api/statistics/weak-words` | Compétences évaluées aux niveaux 0–2 |
 | GET | `/api/statistics/revisions` | Comptages par jour UTC, de J−7 à J+30 |
 
-Les pages ont les champs stables `content`, `number`, `size`, `totalElements`, `totalPages`. Les erreurs métier renvoient `application/problem+json` avec `status`, `title`, `detail`. HTTP 400 pour entrées invalides, 404 pour ressource absente, 409 pour conflit, 429 pour limite de génération, 502 pour échec OpenAI non récupérable.
+Les pages ont les champs stables `content`, `number`, `size`, `totalElements`, `totalPages`. Les erreurs métier renvoient `application/problem+json` avec `status`, `title`, `detail`. HTTP 400 pour entrées invalides, 404 pour ressource absente, 409 pour conflit.
 
 ## Architecture et persistance
 
@@ -212,7 +199,6 @@ Les pages ont les champs stables `content`, `number`, `size`, `totalElements`, `
 - `progress` : progression séparée, historique, import/export d’événements.
 - `revision` : politique pure Java, horloge injectée dans les services.
 - `exercise` : sélection, générateur local, validation, stockage des séances et corrections ; DTO interne distinct du DTO public.
-- `ai` : adaptateur HTTP Responses et limite d’appels.
 - `statistics` : agrégations du MVP.
 - `common` : parsing d’import, pagination et `ProblemDetail`.
 - `config` : horloge et origine frontend autorisée.
@@ -229,7 +215,7 @@ Les imports et statistiques chargent des collections en mémoire : approprié à
 java -jar target/learning-0.0.1-SNAPSHOT.jar
 ```
 
-Les tests unitaires et le serveur HTTP OpenAI simulé ne nécessitent aucune clé et ne font aucun appel payant. Avec Docker disponible, les tests Testcontainers démarrent PostgreSQL 17 et exécutent les scénarios complets avec Flyway/JPA/MockMvc. Sans Docker, ces scénarios sont explicitement marqués ignorés.
+Avec Docker disponible, les tests Testcontainers démarrent PostgreSQL 17 et exécutent les scénarios complets avec Flyway/JPA/MockMvc. Sans Docker, ces scénarios sont explicitement marqués ignorés.
 
 Alternative sans Docker, sur une **base dédiée jetable** (les tests tronquent toutes les données métier avant chaque scénario) :
 
@@ -240,11 +226,10 @@ TEST_DATABASE_USER=chinese TEST_DATABASE_PASSWORD=chinese_dev ./mvnw test
 
 Les mêmes scénarios sont exécutés dans `LearningApplicationTests` lorsque `TEST_DATABASE_URL` est défini. Sans cette variable, cette variante est ignorée. La présence de tests ignorés ne signifie donc pas qu’une base a été testée.
 
-Couverture : validation et atomicité d’import, doublons et homographes, CRUD/recherche/export, niveaux et intervalles, correction et normalisation, absence de fuite des réponses, concurrence et idempotence, OpenAPI, JSON OpenAI strict, HTTP 429, refus, sortie incomplète/malformée, timeout et secours local. Les rapports se trouvent dans `target/surefire-reports`.
+Couverture : validation et atomicité d’import, doublons et homographes, CRUD/recherche/export, niveaux et intervalles, correction et normalisation, absence de fuite des réponses, concurrence et idempotence, OpenAPI, validation du JSON des exercices et rejeu. Les rapports se trouvent dans `target/surefire-reports`.
 
 ## Validation effectuée le 9 novembre 2026
 
 - `mvn package` : succès, **35 tests exécutés avec succès**, dont 12 scénarios d’intégration sur PostgreSQL local **18.6**.
 - Les 12 mêmes scénarios en variante Testcontainers/PostgreSQL 17 ont été ignorés : Docker absent de l’environnement. Le fichier Compose est fourni mais n’a pas été exécuté ici.
 - Test réel du JAR sur une base isolée : import de quatre mots, génération, correction, accès Swagger UI, arrêt/redémarrage, conservation des données et répétition idempotente de la réponse après redémarrage.
-- Aucun appel réel à OpenAI : tests exclusivement sur serveur HTTP simulé. La qualité linguistique et l’accès du compte au modèle restent à vérifier avec une clé configurée.

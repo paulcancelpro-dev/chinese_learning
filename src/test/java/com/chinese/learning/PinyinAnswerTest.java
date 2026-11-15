@@ -49,7 +49,13 @@ class PinyinAnswerTest {
     when(progress.recordAnswer(eq(exercise.id), eq(wordId), any(), eq(true), eq("pengyou")))
         .thenReturn(now);
     var storage =
-        new ExerciseStorage(exercises, mock(SessionRepository.class), progress, Clock.systemUTC());
+        new ExerciseStorage(
+            exercises,
+            mock(SessionRepository.class),
+            progress,
+            Clock.systemUTC(),
+            mock(ExercisePresentation.class),
+            mock(com.chinese.learning.vocabulary.WordRepository.class));
     var correction = storage.answer(exercise.id, "pengyou");
     assertThat(correction.correct()).isTrue();
     assertThat(correction.acceptedAnswers()).containsExactly("péngyou");
